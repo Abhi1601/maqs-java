@@ -8,26 +8,32 @@ import com.cognizantsoftvision.maqs.utilities.helper.StringProcessor;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import org.apache.commons.text.StringEscapeUtils;
 
 /**
  * The HTML File Logger class.
  * Helper class for adding logs to an HTML file. Allows configurable file path.
  */
-public class HtmlFileLogger extends FileLogger implements AutoCloseable {
+public class HtmlFileLogger extends FileLogger implements IHtmlFileLogger {
 
   /**
    * The default log name.
    */
-  private static final String DEFAULT_LOG_NAME = "FileLog.html";
+  private static final String DEFAULT_LOG_NAME = "HtmlFileLog.html";
+
+  private static final File FILE_DIRECTORY = new File(
+      "src/main/java/com/cognizantsoftvision/maqs/utilities/logging/resources");
+
+  private static final String FILES = FILE_DIRECTORY.getAbsolutePath() + File.separator;
 
   /**
-   * Default header for the HTML file, this gives us our colored text.
+   * The beginning to the cards section.
    */
-  private static final String DEFAULT_HTML_HEADER =
-      "<!DOCTYPE html><html><header><title>Test Log</title></header><body>";
+  private static final String CARD_START = "<div class='container-fluid'><div class='row'>";
+
   private static final String LOG_ERROR_MESSAGE = "Failed to write to event log because: %s";
 
   /**
@@ -181,7 +187,16 @@ public class HtmlFileLogger extends FileLogger implements AutoCloseable {
     super(append, logFolder, name, messageLevel);
 
     try (FileWriter writer = new FileWriter(this.getFilePath(), true)) {
-      writer.write(DEFAULT_HTML_HEADER);
+      String defaultCDNTags = Files.readString(Paths.get(FILES + "defaultHeader.html"));
+      defaultCDNTags = defaultCDNTags.replace("{0}", this.getFilePath());
+
+      String css = String.valueOf(Files.readString(Paths.get(FILES + "htmlLogger.css")));
+      defaultCDNTags = defaultCDNTags.replace("{1}", css);
+
+      writer.write(defaultCDNTags);
+      writer.write(System.lineSeparator() + Files.readString(Paths.get(FILES + "script.html")));
+      writer.write(System.lineSeparator() + Files.readString(Paths.get(FILES + "filterDropdown.html")));
+      writer.write(System.lineSeparator() + CARD_START);
     } catch (IOException e) {
       ConsoleLogger console = new ConsoleLogger();
       console.logMessage(MessageType.ERROR, StringProcessor.safeFormatter(LOG_ERROR_MESSAGE, e.getMessage()));
@@ -203,35 +218,34 @@ public class HtmlFileLogger extends FileLogger implements AutoCloseable {
   public void logMessage(MessageType messageType, String message, Object... args) {
     // If the message level is greater that the current log level then do not log it.
     if (this.shouldMessageBeLogged(messageType)) {
-      // Log the message
-      try (FileWriter writer = new FileWriter(this.getFilePath(), true)) {
-        Date dateObject = new Date();
-        SimpleDateFormat format = new SimpleDateFormat(Logger.DEFAULT_DATE_FORMAT);
-        String date = format.format(dateObject);
-
-        // Set the style
-        writer.write(this.getTextWithColorFlag(messageType));
-
-        // Add the content
-        writer.write(StringEscapeUtils.escapeHtml4(
-            StringProcessor.safeFormatter("%s%s%s", System.lineSeparator(), System.lineSeparator(), date)));
-        writer.write(StringEscapeUtils.escapeHtml4(StringProcessor.safeFormatter("%s:\t", messageType.name())));
-        writer.write(
-            StringEscapeUtils.escapeHtml4(StringProcessor.safeFormatter(System.lineSeparator() + message, args)));
-
-        // Close off the style
-        writer.write("</p>");
-
-        // Close the pre tag when logging Errors
-        if (messageType.name().equals("ERROR")) {
-          writer.write("</pre>");
-        }
+      try {
+        String logMessage = Files.readString(Paths.get(FILES + "logMessage.html"));
+        logMessage = logMessage.replace("{messageType}", messageType.name());
+        logMessage = logMessage.replace("{0}", getTextWithColorFlag(messageType));
+        logMessage = logMessage.replace("{1}", currentDateTime());
+        logMessage = logMessage.replace("{2}", StringEscapeUtils.escapeHtml4(
+            StringProcessor.safeFormatter(System.lineSeparator() + message, args)));
+        insertHtml(logMessage);
       } catch (Exception e) {
-        // Failed to write to the event log, write error to the console instead
         ConsoleLogger console = new ConsoleLogger();
         console.logMessage(MessageType.ERROR, StringProcessor.safeFormatter(LOG_ERROR_MESSAGE, e.getMessage()));
-        console.logMessage(messageType, message, args);
       }
+    }
+  }
+
+  /**
+   * Write the formatted message (one line) to the console as a generic message.
+   * @param html Html content
+   */
+  private void insertHtml(String html) {
+    // Log the message
+    try (FileWriter writer = new FileWriter(this.getFilePath(), true)) {
+      writer.write(System.lineSeparator() + html);
+    } catch (Exception e) {
+      // Failed to write to the event log, write error to the console instead
+      ConsoleLogger console = new ConsoleLogger();
+      console.logMessage(MessageType.ERROR, StringProcessor.safeFormatter(LOG_ERROR_MESSAGE, e.getMessage())
+          + System.lineSeparator() + "Content: " + html);
     }
   }
 
@@ -252,13 +266,32 @@ public class HtmlFileLogger extends FileLogger implements AutoCloseable {
     File file = new File(this.getFilePath());
     if (file.exists()) {
       try (FileWriter writer = new FileWriter(this.getFilePath(), true)) {
-        writer.write("</body></html>");
+        writer.write(Files.readString(Path.of(FILES + "modalDiv.html")));
+        writer.write("</div></div></body></html>");
       } catch (IOException e) {
         ConsoleLogger console = new ConsoleLogger();
         console.logMessage(MessageType.ERROR, StringProcessor.safeFormatter(LOG_ERROR_MESSAGE, e.getMessage()));
       }
     }
 
+  }
+
+  /**
+   * Embed a base 64 image.
+   * @param base64String Base 64 image string
+   */
+  @Override
+  public void embedImage(String base64String) {
+    // Image DIV.
+    try {
+      String imageDiv = Files.readString(Path.of(FILES + "embedImage.html"));
+      imageDiv = imageDiv.replace("{0}", currentDateTime());
+      imageDiv = imageDiv.replace("{1}", base64String);
+      insertHtml(imageDiv);
+    } catch (Exception e) {
+      ConsoleLogger console = new ConsoleLogger();
+      console.logMessage(MessageType.ERROR, StringProcessor.safeFormatter(LOG_ERROR_MESSAGE, e.getMessage()));
+    }
   }
 
   /**
@@ -270,20 +303,24 @@ public class HtmlFileLogger extends FileLogger implements AutoCloseable {
   private String getTextWithColorFlag(MessageType type) {
     switch (type) {
       case VERBOSE:
-        return "<p style =\"color:purple\">";
+        return "bg-secondary";
+      case ACTION:
+        return "text-info";
+      case STEP:
+        return "text-primary";
       case ERROR:
-        return "<pre><p style=\"color:red\">";
+        return "text-danger";
       case GENERIC:
-        return "<p style =\"color:black\">";
+        return "";
       case INFORMATION:
-        return "<p style =\"color:blue\">";
+        return "text-secondary";
       case SUCCESS:
-        return "<p style=\"color:green\">";
+        return "text-success";
       case WARNING:
-        return "<p style=\"color:orange\">";
+        return "text-warning";
       default:
-        System.out.println(this.unknownMessageTypeMessage(type));
-        return "<p style=\"color:hotpink\">";
+        logMessage(this.unknownMessageTypeMessage(type));
+        return "text-white bg-dark";
     }
   }
 }
